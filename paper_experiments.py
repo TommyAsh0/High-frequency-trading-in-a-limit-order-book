@@ -37,6 +37,7 @@ Run
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from typing import Dict, List, Optional
 
@@ -60,6 +61,9 @@ REFERENCE_DATE = "20260420"
 
 # Lot size in shares
 ORDER_SIZE = 100
+
+# Output directory for all results (figures + CSVs)
+RESULT_DIR = "data/result"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -95,6 +99,12 @@ def experiment_1(days_data: Dict) -> pd.DataFrame:
 
     print(param_df.to_string(float_format="{:.4f}".format))
     print()
+
+    # Save to CSV
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    csv_path = os.path.join(RESULT_DIR, "experiment1_parameters.csv")
+    param_df.to_csv(csv_path)
+    print(f"  → Saved {csv_path}")
 
     return param_df
 
@@ -136,6 +146,16 @@ def experiment_2(
           f"({result.max_abs_inventory() / ORDER_SIZE:.1f} lots)")
     print(f"  Avg spread     : {result.avg_spread():.4f} CNY")
     print(f"  Sharpe ratio   : {result.sharpe_ratio():.4f}")
+
+    # Save trade detail log
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    trade_log_df = result.to_trade_log_df()
+    if not trade_log_df.empty:
+        csv_path = os.path.join(
+            RESULT_DIR, f"trade_detail_{date}_gamma{gamma}.csv"
+        )
+        trade_log_df.to_csv(csv_path, index=False)
+        print(f"  → Saved {csv_path}  ({len(trade_log_df)} events)")
 
     if save_plots:
         _plot_experiment_2(result, date, gamma, sigma, kappa)
@@ -194,7 +214,8 @@ def _plot_experiment_2(
     ax.set_title("Figure 3 — Mark-to-Market P&L = Cash + $q(t) \\cdot S(t)$")
 
     plt.tight_layout()
-    fname = f"fig_experiment2_{date}_gamma{gamma}.png"
+    fname = os.path.join(RESULT_DIR, f"fig_experiment2_{date}_gamma{gamma}.png")
+    os.makedirs(RESULT_DIR, exist_ok=True)
     plt.savefig(fname, dpi=150)
     print(f"  → Saved {fname}")
     plt.close(fig)
@@ -264,6 +285,12 @@ def experiment_3(
     print(df.to_string(float_format="{:.4f}".format))
     print()
 
+    # Save to CSV
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    csv_path = os.path.join(RESULT_DIR, "experiment3_gamma_sensitivity.csv")
+    df.to_csv(csv_path)
+    print(f"  → Saved {csv_path}")
+
     if save_plots:
         _plot_experiment_3(df, sigma, kappa)
 
@@ -302,7 +329,8 @@ def _plot_experiment_3(df: pd.DataFrame, sigma: float, kappa: float) -> None:
     ax.set_title("Max |inventory| (higher γ → better control)")
 
     plt.tight_layout()
-    fname = "fig_experiment3_gamma_sensitivity.png"
+    fname = os.path.join(RESULT_DIR, "fig_experiment3_gamma_sensitivity.png")
+    os.makedirs(RESULT_DIR, exist_ok=True)
     plt.savefig(fname, dpi=150)
     print(f"  → Saved {fname}")
     plt.close(fig)
@@ -376,6 +404,13 @@ def experiment_4(
 
     print(df.to_string(float_format="{:.4f}".format))
     print()
+
+    # Save to CSV
+    os.makedirs(RESULT_DIR, exist_ok=True)
+    csv_path = os.path.join(RESULT_DIR, "experiment4_as_vs_symmetric.csv")
+    df.to_csv(csv_path)
+    print(f"  → Saved {csv_path}")
+
     return df
 
 
@@ -420,7 +455,8 @@ def _plot_experiment_4_day(
     ax.set_title("Inventory Process  [1 lot = 100 shares]")
 
     plt.tight_layout()
-    fname = f"fig_experiment4_comparison_{date}.png"
+    fname = os.path.join(RESULT_DIR, f"fig_experiment4_comparison_{date}.png")
+    os.makedirs(RESULT_DIR, exist_ok=True)
     plt.savefig(fname, dpi=150)
     print(f"  → Saved {fname}")
     plt.close(fig)
@@ -432,7 +468,7 @@ def _plot_experiment_4_day(
 
 def main(save_plots: bool = False) -> None:
     print("Loading tick data …")
-    days_data = load_all_days(DATES)
+    days_data = load_all_days(DATES, data_dir="data/limit_order_data")
     print(f"  Loaded {len(DATES)} trading days for {list(days_data.keys())}")
 
     # ── Experiment 1: parameter estimation ───────────────────────────────────
@@ -475,8 +511,9 @@ def main(save_plots: bool = False) -> None:
 
     print("=" * 65)
     print("All experiments complete.")
+    print(f"Results saved to: {RESULT_DIR}/")
     if save_plots:
-        print("Figures saved to: fig_experiment*.png")
+        print(f"Figures saved to: {RESULT_DIR}/fig_experiment*.png")
     print("=" * 65)
 
 

@@ -12,7 +12,7 @@ Chinese A-share continuous-trading session:
     Afternoon: 13:00 – 15:00  (2 hours = 7 200 s)
     Total    : 14 400 seconds → 1 normalised time unit
 
-Data files expected (all in the working directory):
+Data files expected (in data/limit_order_data/ by default):
     000931.SZ_{date}_market.csv
     000931.SZ_{date}_order.csv
     000931.SZ_{date}_transaction.csv
@@ -86,10 +86,10 @@ class TickDataLoader:
     date : str
         Date string in 'YYYYMMDD' format (e.g. '20260420').
     data_dir : str
-        Directory containing the CSV files.  Defaults to CWD.
+        Directory containing the CSV files.  Defaults to 'data/limit_order_data'.
     """
 
-    def __init__(self, date: str, data_dir: str = ".") -> None:
+    def __init__(self, date: str, data_dir: str = "data/limit_order_data") -> None:
         self.date = date
         self.data_dir = data_dir
         self._market: Optional[pd.DataFrame] = None
@@ -182,7 +182,7 @@ class TickDataLoader:
 
 def load_all_days(
     dates: List[str],
-    data_dir: str = ".",
+    data_dir: str = "data/limit_order_data",
 ) -> Dict[str, Dict[str, pd.DataFrame]]:
     """
     Load all trading days and return a dict:

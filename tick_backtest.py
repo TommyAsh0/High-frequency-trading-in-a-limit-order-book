@@ -38,6 +38,33 @@ import pandas as pd
 from avellaneda_stoikov import AvellanedaStoikov
 
 
+# ── Trade event dataclass ────────────────────────────────────────────────────
+
+@dataclass
+class TradeEvent:
+    """A single strategy action recorded during the backtest.
+
+    event_type values
+    -----------------
+    PLACE_BID   – new bid limit order posted
+    PLACE_ASK   – new ask limit order posted
+    CANCEL_BID  – unfilled bid cancelled before re-quote
+    CANCEL_ASK  – unfilled ask cancelled before re-quote
+    FILL_BID    – our bid was hit (we bought)
+    FILL_ASK    – our ask was hit (we sold)
+    """
+
+    time_str: str      # wall-clock time 'HH:MM:SS.mmm'
+    time_norm: float   # normalised trading-day time [0, 1]
+    event_type: str    # one of the six types above
+    price: float       # order/fill price (CNY)
+    volume: float      # order size or fill size (shares)
+    mid_price: float   # current market mid-price
+    inventory: float   # inventory in shares *after* this event
+    cash: float        # cash balance *after* this event
+    pnl: float         # mark-to-market P&L *after* this event
+
+
 # ── Result dataclass ─────────────────────────────────────────────────────────
 
 @dataclass
@@ -53,6 +80,7 @@ class TickBacktestResult:
     cash: List[float] = field(default_factory=list)          # in CNY
     pnl: List[float] = field(default_factory=list)           # cash + q*mid (CNY)
     spreads: List[float] = field(default_factory=list)
+    trade_log: List[TradeEvent] = field(default_factory=list)
 
     # ── Derived statistics ────────────────────────────────────────────────
 
@@ -84,6 +112,27 @@ class TickBacktestResult:
             return 0
         return int(sum(1 for i in range(1, len(self.inventories))
                        if self.inventories[i] != self.inventories[i - 1]))
+
+    def to_trade_log_df(self) -> pd.DataFrame:
+        """Return the trade log as a tidy DataFrame (one row per event)."""
+        if not self.trade_log:
+            return pd.DataFrame()
+        return pd.DataFrame(
+            [
+                {
+                    "time_str": e.time_str,
+                    "time_norm": e.time_norm,
+                    "event_type": e.event_type,
+                    "price": e.price,
+                    "volume": e.volume,
+                    "mid_price": e.mid_price,
+                    "inventory": e.inventory,
+                    "cash": e.cash,
+                    "pnl": e.pnl,
+                }
+                for e in self.trade_log
+            ]
+        )
 
 
 # ── Backtester ───────────────────────────────────────────────────────────────
@@ -148,7 +197,22 @@ class TickBacktester:
 
         for i, row in self.market.iterrows():
             t = row["time_norm"]
+            t_str = str(row.get("time_str", t))
             mid = row["mid_price"]
+
+            # ── Cancel previous unfilled quotes before re-quoting ─────────────
+            if bid_price is not None and bid_remaining > 0:
+                result.trade_log.append(TradeEvent(
+                    time_str=t_str, time_norm=t, event_type="CANCEL_BID",
+                    price=bid_price, volume=bid_remaining, mid_price=mid,
+                    inventory=inventory, cash=cash, pnl=cash + inventory * mid,
+                ))
+            if ask_price is not None and ask_remaining > 0:
+                result.trade_log.append(TradeEvent(
+                    time_str=t_str, time_norm=t, event_type="CANCEL_ASK",
+                    price=ask_price, volume=ask_remaining, mid_price=mid,
+                    inventory=inventory, cash=cash, pnl=cash + inventory * mid,
+                ))
 
             # ── Re-quote ─────────────────────────────────────────────────────
             # Express inventory in lots for the strategy so that γ is in
@@ -166,6 +230,18 @@ class TickBacktester:
             bid_remaining = float(self.order_size)
             ask_remaining = float(self.order_size)
 
+            # Record new quote placements
+            result.trade_log.append(TradeEvent(
+                time_str=t_str, time_norm=t, event_type="PLACE_BID",
+                price=bid_price, volume=bid_remaining, mid_price=mid,
+                inventory=inventory, cash=cash, pnl=cash + inventory * mid,
+            ))
+            result.trade_log.append(TradeEvent(
+                time_str=t_str, time_norm=t, event_type="PLACE_ASK",
+                price=ask_price, volume=ask_remaining, mid_price=mid,
+                inventory=inventory, cash=cash, pnl=cash + inventory * mid,
+            ))
+
             # ── Process transactions in (t_i, t_{i+1}) ───────────────────────
             txn_slice = self._txn_index.get(i, pd.DataFrame())
 
@@ -173,6 +249,8 @@ class TickBacktester:
                 tp = txn["price"]
                 tv = float(txn["volume"])
                 flag = txn["bsflag"]
+                txn_t_str = str(txn.get("time_str", t_str))
+                txn_t_norm = float(txn.get("time_norm", t))
 
                 if flag == "B" and ask_remaining > 0 and ask_price is not None:
                     # Buyer-initiated: hits ask side → we sell
@@ -181,6 +259,13 @@ class TickBacktester:
                         cash += fill * ask_price
                         inventory -= fill
                         ask_remaining -= fill
+                        result.trade_log.append(TradeEvent(
+                            time_str=txn_t_str, time_norm=txn_t_norm,
+                            event_type="FILL_ASK",
+                            price=ask_price, volume=fill, mid_price=mid,
+                            inventory=inventory, cash=cash,
+                            pnl=cash + inventory * mid,
+                        ))
 
                 elif flag == "S" and bid_remaining > 0 and bid_price is not None:
                     # Seller-initiated: hits bid side → we buy
@@ -189,6 +274,13 @@ class TickBacktester:
                         cash -= fill * bid_price
                         inventory += fill
                         bid_remaining -= fill
+                        result.trade_log.append(TradeEvent(
+                            time_str=txn_t_str, time_norm=txn_t_norm,
+                            event_type="FILL_BID",
+                            price=bid_price, volume=fill, mid_price=mid,
+                            inventory=inventory, cash=cash,
+                            pnl=cash + inventory * mid,
+                        ))
 
             # ── Record state ──────────────────────────────────────────────────
             r = (mid if self.symmetric
